@@ -18,6 +18,9 @@ import {
   Wallet,
   HardHat,
   Megaphone,
+  ChevronRight,
+  ChevronDown,
+  Home,
 } from 'lucide-react';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -51,12 +54,16 @@ export default function Street() {
   const [unitForm, setUnitForm] = useState({ name: '', qualification: '', contactPerson: '', contactPhone: '' });
   const [showUnitForm, setShowUnitForm] = useState(false);
   const [noticeForm, setNoticeForm] = useState({ startDate: '', endDate: '' });
+  const [expandedBuildingId, setExpandedBuildingId] = useState<string | null>(null);
+  const [showHouseholdModal, setShowHouseholdModal] = useState(false);
+  const [selectedBuildingId, setSelectedBuildingId] = useState('');
+  const [householdForm, setHouseholdForm] = useState({ unitNo: '', floorNo: '', roomNo: '', area: '' });
 
   const store = useStore();
   const {
     projects, buildings, households, budgetSources, constructionUnits, publicNotices,
     addProject, confirmBudget, addBuilding, addBudgetSource, removeBudgetSource,
-    addConstructionUnit, publishNotice, getVoteStats,
+    addConstructionUnit, publishNotice, getVoteStats, addHousehold,
   } = store;
 
   const filteredBuildings = buildings.filter((b) => b.projectId === selectedProjectId);
@@ -125,6 +132,22 @@ export default function Street() {
 
   const getHouseholdCount = (buildingId: string) =>
     households.filter((h) => h.buildingId === buildingId).length;
+
+  const getBuildingHouseholds = (buildingId: string) =>
+    households.filter((h) => h.buildingId === buildingId);
+
+  const handleAddHousehold = () => {
+    if (!selectedBuildingId || !householdForm.roomNo) return;
+    addHousehold({
+      buildingId: selectedBuildingId,
+      unitNo: householdForm.unitNo,
+      floorNo: householdForm.floorNo,
+      roomNo: householdForm.roomNo,
+      area: Number(householdForm.area) || 0,
+    });
+    setHouseholdForm({ unitNo: '', floorNo: '', roomNo: '', area: '' });
+    setShowHouseholdModal(false);
+  };
 
   const voteStats = activeNotice ? getVoteStats(activeNotice.id) : null;
   const remaining = activeNotice ? daysRemaining(activeNotice.endDate) : 0;
@@ -299,40 +322,123 @@ export default function Street() {
           )}
 
           {selectedProjectId && filteredBuildings.length > 0 && (
-            <div className="border rounded-xl overflow-hidden">
-              <table className="w-full text-sm">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-4 py-3 text-left font-medium text-gray-600">楼栋号</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-600">单元数</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-600">户数</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-600">面积 (m²)</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-600">已录入户数</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-600">状态</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {filteredBuildings.map((b) => (
-                    <tr key={b.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-3 font-medium">{b.buildingNo}</td>
-                      <td className="px-4 py-3">{b.units}</td>
-                      <td className="px-4 py-3">{b.households}</td>
-                      <td className="px-4 py-3">{b.area}</td>
-                      <td className="px-4 py-3">{getHouseholdCount(b.id)}</td>
-                      <td className="px-4 py-3">
-                        {b.inspectionLocked ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-red-100 text-red-700">
-                            <Lock size={12} />
-                            已验收锁定
-                          </span>
+            <div className="space-y-3">
+              {filteredBuildings.map((b) => {
+                const isExpanded = expandedBuildingId === b.id;
+                const recorded = getHouseholdCount(b.id);
+                const bHouseholds = getBuildingHouseholds(b.id);
+                return (
+                  <div key={b.id} className="border rounded-xl overflow-hidden bg-white shadow-sm">
+                    <table className="w-full text-sm">
+                      <tbody>
+                        <tr
+                          className="hover:bg-gray-50 cursor-pointer"
+                          onClick={() => setExpandedBuildingId(isExpanded ? null : b.id)}
+                        >
+                          <td className="px-3 py-3 w-8 text-center text-gray-400">
+                            {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                          </td>
+                          <td className="px-2 py-3 font-medium">{b.buildingNo}</td>
+                          <td className="px-2 py-3">{b.units}</td>
+                          <td className="px-2 py-3">{b.households}</td>
+                          <td className="px-2 py-3">{b.area}</td>
+                          <td className="px-2 py-3">
+                            <span
+                              className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                                recorded >= b.households
+                                  ? 'bg-green-100 text-green-700'
+                                  : 'bg-blue-100 text-blue-700'
+                              }`}
+                            >
+                              {recorded} / {b.households || '-'}
+                            </span>
+                          </td>
+                          <td className="px-2 py-3">
+                            {b.inspectionLocked ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-red-100 text-red-700">
+                                <Lock size={12} />
+                                已验收锁定
+                              </span>
+                            ) : (
+                              <span className="text-gray-400">正常</span>
+                            )}
+                          </td>
+                          <td className="px-2 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              onClick={() => {
+                                setSelectedBuildingId(b.id);
+                                setShowHouseholdModal(true);
+                              }}
+                              disabled={b.inspectionLocked}
+                              className={`inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded-lg transition-colors ${
+                                b.inspectionLocked
+                                  ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                  : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+                              }`}
+                            >
+                              <Plus size={14} />
+                              录入分户
+                            </button>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+
+                    {isExpanded && (
+                      <div className="border-t bg-gray-50 p-4">
+                        <div className="flex items-center justify-between mb-3">
+                          <h4 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                            <Home size={14} />
+                            分户明细（{bHouseholds.length} 条）
+                          </h4>
+                          <button
+                            onClick={() => {
+                              setSelectedBuildingId(b.id);
+                              setShowHouseholdModal(true);
+                            }}
+                            disabled={b.inspectionLocked}
+                            className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded ${
+                              b.inspectionLocked
+                                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                : 'bg-white border text-blue-600 hover:bg-blue-50'
+                            }`}
+                          >
+                            <Plus size={12} /> 新增分户
+                          </button>
+                        </div>
+                        {bHouseholds.length === 0 ? (
+                          <div className="text-center py-6 text-gray-400 text-sm">
+                            暂无分户明细，请点击右上角"新增分户"录入
+                          </div>
                         ) : (
-                          <span className="text-gray-400">正常</span>
+                          <div className="border rounded-lg overflow-hidden bg-white">
+                            <table className="w-full text-xs">
+                              <thead className="bg-gray-50">
+                                <tr>
+                                  <th className="px-3 py-2 text-left font-medium text-gray-600">单元号</th>
+                                  <th className="px-3 py-2 text-left font-medium text-gray-600">楼层</th>
+                                  <th className="px-3 py-2 text-left font-medium text-gray-600">房号</th>
+                                  <th className="px-3 py-2 text-left font-medium text-gray-600">面积 (m²)</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y">
+                                {bHouseholds.map((h) => (
+                                  <tr key={h.id}>
+                                    <td className="px-3 py-2">{h.unitNo || '-'}</td>
+                                    <td className="px-3 py-2">{h.floorNo || '-'}</td>
+                                    <td className="px-3 py-2 font-medium">{h.roomNo}</td>
+                                    <td className="px-3 py-2">{h.area || '-'}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
                         )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
 
@@ -381,6 +487,79 @@ export default function Street() {
                     className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
                   >
                     确认
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showHouseholdModal && (
+            <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+              <div className="bg-white rounded-xl p-6 w-full max-w-md space-y-4 shadow-xl">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-semibold">
+                    录入分户 · {buildings.find((b) => b.id === selectedBuildingId)?.buildingNo}
+                  </h3>
+                  <button onClick={() => setShowHouseholdModal(false)} className="text-gray-400 hover:text-gray-600">
+                    <XCircle size={20} />
+                  </button>
+                </div>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium mb-1">单元号 <span className="text-gray-400">(可选)</span></label>
+                    <input
+                      value={householdForm.unitNo}
+                      onChange={(e) => setHouseholdForm({ ...householdForm, unitNo: e.target.value })}
+                      placeholder="如：1、2、3"
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">楼层 <span className="text-gray-400">(可选)</span></label>
+                    <input
+                      value={householdForm.floorNo}
+                      onChange={(e) => setHouseholdForm({ ...householdForm, floorNo: e.target.value })}
+                      placeholder="如：1F、2F"
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">房号 <span className="text-red-500">*</span></label>
+                    <input
+                      value={householdForm.roomNo}
+                      onChange={(e) => setHouseholdForm({ ...householdForm, roomNo: e.target.value })}
+                      placeholder="如：101、2-202"
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">面积 (m²) <span className="text-gray-400">(可选)</span></label>
+                    <input
+                      type="number"
+                      value={householdForm.area}
+                      onChange={(e) => setHouseholdForm({ ...householdForm, area: e.target.value })}
+                      placeholder="如：85.5"
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+                <div className="flex gap-3 justify-end">
+                  <button
+                    onClick={() => setShowHouseholdModal(false)}
+                    className="px-4 py-2 border rounded-lg hover:bg-gray-50"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={handleAddHousehold}
+                    disabled={!householdForm.roomNo}
+                    className={`px-4 py-2 rounded-lg transition-colors ${
+                      !householdForm.roomNo
+                        ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                        : 'bg-blue-600 text-white hover:bg-blue-700'
+                    }`}
+                  >
+                    确认录入
                   </button>
                 </div>
               </div>

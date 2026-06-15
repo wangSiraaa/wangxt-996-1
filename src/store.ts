@@ -161,6 +161,14 @@ const useStore = create<AppState>()(
         const id = generateId();
         const household: Household = { ...h, id };
         set((s) => ({ households: [...s.households, household] }));
+        const building = get().buildings.find((b) => b.id === h.buildingId);
+        if (building) {
+          get().addAuditLog(
+            building.projectId,
+            '录入分户',
+            `${building.buildingNo} · 房号${h.roomNo}${h.area ? ` · ${h.area}m²` : ''}`
+          );
+        }
         return id;
       },
 

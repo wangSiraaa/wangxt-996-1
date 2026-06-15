@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import {
-  Bell, Vote, MessageSquareWarning, ChevronDown, ChevronUp,
+  Bell, Vote, MessageSquareWarning, ChevronDown, ChevronUp, ChevronRight,
   ThumbsUp, ThumbsDown, CheckCircle2, Send, Building2,
-  MapPin, Wallet, HardHat, Clock, User, Phone
+  MapPin, Wallet, HardHat, Clock, User, Phone, Home, Users,
 } from 'lucide-react';
 import useStore from '@/store';
 import {
@@ -36,9 +36,14 @@ export default function Resident() {
   const [lastObjectionId, setLastObjectionId] = useState('');
 
   const {
-    publicNotices, projects, buildings, budgetSources, constructionUnits,
+    publicNotices, projects, buildings, households, budgetSources, constructionUnits,
     votes, objections, addVote, addObjection, getVoteStats,
   } = useStore();
+
+  const [expandedBuildingId, setExpandedBuildingId] = useState<string | null>(null);
+
+  const getBuildingHouseholds = (buildingId: string) =>
+    households.filter((h) => h.buildingId === buildingId);
 
   const activeNotices = publicNotices.filter(
     (n) => n.status === 'active' || n.status === 'republished'
@@ -225,24 +230,75 @@ export default function Resident() {
                           )}
 
                           {projectBuildings.length > 0 && (
-                            <div>
-                              <div className="flex items-center gap-2 mb-2">
+                            <div className="space-y-2">
+                              <div className="flex items-center gap-2 mb-1">
                                 <Building2 className="w-4 h-4 text-gray-500" />
                                 <span className="text-sm font-semibold text-gray-700">楼栋列表</span>
                               </div>
-                              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                                {projectBuildings.map((b) => (
-                                  <div
-                                    key={b.id}
-                                    className="bg-gray-50 rounded-lg px-3 py-2 text-sm"
-                                  >
-                                    <span className="font-medium text-gray-700">{b.buildingNo}</span>
-                                    <span className="text-gray-400 ml-1">
-                                      {b.units}单元 · {b.households}户 · {b.area}m²
-                                    </span>
+                              {projectBuildings.map((b) => {
+                                const isExpanded = expandedBuildingId === b.id;
+                                const bHouseholds = getBuildingHouseholds(b.id);
+                                const recorded = bHouseholds.length;
+                                return (
+                                  <div key={b.id} className="border rounded-lg overflow-hidden bg-white">
+                                    <div
+                                      className="flex items-center justify-between px-3 py-2.5 cursor-pointer hover:bg-gray-50"
+                                      onClick={() => setExpandedBuildingId(isExpanded ? null : b.id)}
+                                    >
+                                      <div className="flex items-center gap-2">
+                                        {isExpanded
+                                          ? <ChevronDown size={14} className="text-gray-400" />
+                                          : <ChevronRight size={14} className="text-gray-400" />}
+                                        <span className="font-medium text-gray-700">{b.buildingNo}</span>
+                                        <span className="text-gray-400 text-sm">
+                                          {b.units}单元 · {b.households}户 · {b.area}m²
+                                        </span>
+                                      </div>
+                                      <span
+                                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
+                                          recorded >= b.households
+                                            ? 'bg-green-100 text-green-700'
+                                            : 'bg-blue-50 text-blue-700'
+                                        }`}
+                                      >
+                                        <Users size={10} />
+                                        已登记 {recorded}/{b.households || 0}
+                                      </span>
+                                    </div>
+                                    {isExpanded && (
+                                      <div className="border-t bg-gray-50 p-3">
+                                        <div className="flex items-center gap-1 mb-2 text-xs text-gray-600 font-medium">
+                                          <Home size={12} />
+                                          分户明细（{bHouseholds.length} 条）
+                                        </div>
+                                        {bHouseholds.length === 0 ? (
+                                          <div className="text-center py-3 text-xs text-gray-400">
+                                            街道暂未录入户主/房号信息
+                                          </div>
+                                        ) : (
+                                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                                            {bHouseholds.map((h) => (
+                                              <div
+                                                key={h.id}
+                                                className="bg-white border rounded px-2.5 py-2 text-xs flex items-center justify-between"
+                                              >
+                                                <span className="font-medium text-gray-700">
+                                                  {h.roomNo}
+                                                </span>
+                                                <div className="flex flex-col items-end text-gray-400">
+                                                  {h.unitNo && <span>{h.unitNo}单元</span>}
+                                                  {h.floorNo && <span>{h.floorNo}</span>}
+                                                  {h.area > 0 && <span className="text-gray-500">{h.area}m²</span>}
+                                                </div>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
                                   </div>
-                                ))}
-                              </div>
+                                );
+                              })}
                             </div>
                           )}
                         </div>

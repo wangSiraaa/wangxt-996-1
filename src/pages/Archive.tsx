@@ -4,6 +4,7 @@ import { formatDateTime, PROJECT_STATUS_LABELS } from '@/types';
 import {
   ScrollText, Archive as ArchiveIcon, User, Clock, CheckCircle2,
   XCircle, Building2, ShieldCheck, FileCheck, Lock,
+  ChevronRight, ChevronDown, Home, Users,
 } from 'lucide-react';
 
 const ROLE_BADGE: Record<string, { bg: string; text: string; label: string }> = {
@@ -22,7 +23,11 @@ export default function Archive() {
   const [confirmId, setConfirmId] = useState<string | null>(null);
 
   const store = useStore();
-  const { projects, buildings, constructionPhases, inspections, auditLogs, archiveProject } = store;
+  const { projects, buildings, households, constructionPhases, inspections, auditLogs, archiveProject } = store;
+  const [expandedBuildingId, setExpandedBuildingId] = useState<string | null>(null);
+
+  const getBuildingHouseholds = (buildingId: string) =>
+    households.filter((h) => h.buildingId === buildingId);
 
   const filteredLogs = useMemo(() => {
     return auditLogs
@@ -162,6 +167,9 @@ export default function Archive() {
                 const projectInspections = getProjectInspections(project.id);
                 const completedPhases = phases.filter((p) => p.status === 'completed').length;
                 const passedInspections = projectInspections.filter((i) => i.result === 'pass').length;
+                const projectBuildings = buildings.filter((b) => b.projectId === project.id);
+                const totalHouseholds = projectBuildings.reduce((s, b) => s + (b.households || 0), 0);
+                const recordedHouseholds = projectBuildings.reduce((s, b) => s + getBuildingHouseholds(b.id).length, 0);
 
                 return (
                   <div
@@ -187,7 +195,7 @@ export default function Archive() {
                       )}
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-3 gap-3">
                       <div className="bg-gray-50 rounded-lg p-3 space-y-1">
                         <div className="flex items-center gap-1.5 text-xs text-gray-500">
                           <Building2 size={12} />
@@ -229,7 +237,93 @@ export default function Archive() {
                           </span>
                         )}
                       </div>
+
+                      <div className="bg-gray-50 rounded-lg p-3 space-y-1">
+                        <div className="flex items-center gap-1.5 text-xs text-gray-500">
+                          <Users size={12} />
+                          分户登记
+                        </div>
+                        <div className="text-sm">
+                          <span className="font-semibold text-gray-800">{recordedHouseholds}</span>
+                          <span className="text-gray-400"> / {totalHouseholds || '-'} 户</span>
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          {projectBuildings.length} 栋楼
+                        </div>
+                        {totalHouseholds > 0 && recordedHouseholds >= totalHouseholds && (
+                          <span className="inline-flex items-center gap-1 text-xs text-green-600">
+                            <CheckCircle2 size={10} /> 全部登记
+                          </span>
+                        )}
+                        {totalHouseholds > 0 && recordedHouseholds < totalHouseholds && (
+                          <span className="inline-flex items-center gap-1 text-xs text-amber-600">
+                            <XCircle size={10} /> 未完成登记
+                          </span>
+                        )}
+                      </div>
                     </div>
+
+                    {projectBuildings.length > 0 && (
+                      <div className="space-y-1.5 border-t pt-4">
+                        <div className="text-xs text-gray-500 font-medium flex items-center gap-1.5">
+                          <Home size={12} /> 楼栋与分户明细
+                        </div>
+                        {projectBuildings.map((b) => {
+                          const isExpanded = expandedBuildingId === b.id;
+                          const bHouseholds = getBuildingHouseholds(b.id);
+                          return (
+                            <div key={b.id} className="border rounded-lg overflow-hidden">
+                              <div
+                                className="flex items-center justify-between px-3 py-2 cursor-pointer hover:bg-gray-50 text-sm"
+                                onClick={() => setExpandedBuildingId(isExpanded ? null : b.id)}
+                              >
+                                <div className="flex items-center gap-2">
+                                  {isExpanded
+                                    ? <ChevronDown size={13} className="text-gray-400" />
+                                    : <ChevronRight size={13} className="text-gray-400" />}
+                                  <span className="font-medium">{b.buildingNo}</span>
+                                  <span className="text-gray-400 text-xs">
+                                    {b.units}单元 · {b.households}户 · {b.area}m²
+                                  </span>
+                                </div>
+                                <span
+                                  className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                                    bHouseholds.length >= b.households
+                                      ? 'bg-green-100 text-green-700'
+                                      : 'bg-blue-50 text-blue-700'
+                                  }`}
+                                >
+                                  {bHouseholds.length} / {b.households || 0}
+                                </span>
+                              </div>
+                              {isExpanded && (
+                                <div className="border-t bg-gray-50 p-2">
+                                  {bHouseholds.length === 0 ? (
+                                    <div className="text-center py-2 text-xs text-gray-400">
+                                      无分户登记记录
+                                    </div>
+                                  ) : (
+                                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-1">
+                                      {bHouseholds.map((h) => (
+                                        <div
+                                          key={h.id}
+                                          className="bg-white border rounded px-2 py-1.5 text-xs flex items-center justify-between"
+                                        >
+                                          <span className="font-medium text-gray-700">{h.roomNo}</span>
+                                          {h.area > 0 && (
+                                            <span className="text-gray-500">{h.area}m²</span>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
 
                     {!isArchived && (
                       <button
