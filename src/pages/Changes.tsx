@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import useStore from '@/store';
-import { formatDate, formatDateTime } from '@/types';
+import { formatDate, formatDateTime, ChangeCategory, CHANGE_CATEGORY_CONFIG } from '@/types';
 import {
   FileEdit, History, AlertTriangle, CheckCircle2, XCircle,
-  Clock, RefreshCw, Send, Building2,
+  Clock, RefreshCw, Send, Building2, Link2,
 } from 'lucide-react';
 
 const STATUS_BADGE: Record<string, { bg: string; text: string; label: string }> = {
@@ -15,21 +15,74 @@ const STATUS_BADGE: Record<string, { bg: string; text: string; label: string }> 
 export default function Changes() {
   const [selectedProjectId, setSelectedProjectId] = useState('');
   const [buildingId, setBuildingId] = useState('');
+  const [changeCategory, setChangeCategory] = useState<ChangeCategory>('other');
   const [reason, setReason] = useState('');
 
   const store = useStore();
-  const { projects, buildings, changeRecords, submitChange, approveChange, rejectChange } = store;
+  const { projects, buildings, changeRecords, submitChange, approveChange, rejectChange, publicNotices } = store;
 
   const projectBuildings = buildings.filter((b) => b.projectId === selectedProjectId);
   const projectChanges = changeRecords.filter((c) => c.projectId === selectedProjectId);
   const selectedBuilding = buildings.find((b) => b.id === buildingId);
   const isInspectionLocked = selectedBuilding?.inspectionLocked ?? false;
 
+  const cascadeAffectedIds = useMemo(() => {
+    if (!buildingId) return [];
+    return store.getCascadeAffectedBuildings(buildingId);
+  }, [buildingId, store, buildings]);
+
+  const cascadeAffectedDetails = useMemo(() => {
+    return cascadeAffectedIds.map((aid) => {
+      const affectedBuilding = buildings.find((b) => b.id === aid);
+      if (!affectedBuilding) return null;
+      const reasons: string[] = [];
+      if (selectedBuilding?.sharedPipeBuildingIds.includes(aid)) {
+        reasons.push('共享管网');
+      }
+      if (selectedBuilding?.budgetAffectedBy.includes(aid)) {
+        reasons.push('共享预算');
+      }
+      if (affectedBuilding.sharedPipeBuildingIds.includes(buildingId)) {
+        reasons.push('共享管网');
+      }
+      if (affectedBuilding.budgetAffectedBy.includes(buildingId)) {
+        reasons.push('共享预算');
+      }
+      return {
+        id: aid,
+        buildingNo: affectedBuilding.buildingNo,
+        reasons: [...new Set(reasons)],
+        inspectionLocked: affectedBuilding.inspectionLocked,
+      };
+    }).filter(Boolean) as { id: string; buildingNo: string; reasons: string[]; inspectionLocked: boolean }[];
+  }, [cascadeAffectedIds, buildings, selectedBuilding, buildingId]);
+
   const handleSubmit = () => {
     if (!selectedProjectId || !buildingId || !reason.trim()) return;
-    submitChange(selectedProjectId, buildingId, reason.trim());
+    submitChange(selectedProjectId, buildingId, changeCategory, reason.trim());
     setBuildingId('');
+    setChangeCategory('other');
     setReason('');
+  };
+
+  const getCascadeInfoForRecord = (record: (typeof projectChanges)[0]) => {
+    if (!record.cascadeAffectedBuildingIds.length) return null;
+    return record.cascadeAffectedBuildingIds.map((aid) => {
+      const b = buildings.find((bl) => bl.id === aid);
+      return b ? b.buildingNo : aid.slice(-6);
+    });
+  };
+
+  const getRepublicationStatus = (record: (typeof projectChanges)[0]) => {
+    const notice = publicNotices.find(
+      (n) => n.triggeredByChangeId === record.id && (n.status === 'active' || n.status === 'republished')
+    );
+    if (!notice) return null;
+    return {
+      startDate: notice.startDate,
+      endDate: notice.endDate,
+      cascadeBuildingIds: notice.cascadeAffectedBuildingIds,
+    };
   };
 
   return (
@@ -41,6 +94,7 @@ export default function Changes() {
           onChange={(e) => {
             setSelectedProjectId(e.target.value);
             setBuildingId('');
+            setChangeCategory('other');
             setReason('');
           }}
           className="px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none min-w-[220px]"
@@ -80,6 +134,51 @@ export default function Changes() {
                   ))}
                 </select>
               </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">变更类型</label>
+                <select
+                  value={changeCategory}
+                  onChange={(e) => setChangeCategory(e.target.value as ChangeCategory)}
+                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                >
+                  {(Object.keys(CHANGE_CATEGORY_CONFIG) as ChangeCategory[]).map((key) => (
+                    <option key={key} value={key}>{CHANGE_CATEGORY_CONFIG[key].label}</option>
+                  ))}
+                </select>
+              </div>
+
+              {buildingId && cascadeAffectedDetails.length > 0 && (
+                <div className="border border-orange-200 bg-orange-50 rounded-lg p-4 space-y-3">
+                  <div className="flex items-center gap-2 text-orange-700 font-medium">
+                    <Link2 size={16} />
+                    <span>级联影响（{cascadeAffectedDetails.length} 栋楼受影响）</span>
+                  </div>
+                  <div className="space-y-2">
+                    {cascadeAffectedDetails.map((detail) => (
+                      <div key={detail.id} className="flex items-center gap-3 bg-white rounded-md px-3 py-2 border border-orange-100">
+                        <Building2 size={14} className="text-orange-500 shrink-0" />
+                        <span className="font-medium text-sm">{detail.buildingNo}</span>
+                        <div className="flex items-center gap-1.5">
+                          {detail.reasons.map((r) => (
+                            <span key={r} className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-700">
+                              {r}
+                            </span>
+                          ))}
+                        </div>
+                        {detail.inspectionLocked && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">
+                            已验收锁定
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-xs text-orange-600">
+                    变更批准后，以上楼栋的公示期/投票/预算将受到级联影响
+                  </p>
+                </div>
+              )}
 
               {isInspectionLocked && (
                 <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg">
@@ -136,7 +235,9 @@ export default function Changes() {
                     <tr>
                       <th className="px-4 py-3 text-left font-medium text-gray-600">ID</th>
                       <th className="px-4 py-3 text-left font-medium text-gray-600">楼栋</th>
+                      <th className="px-4 py-3 text-left font-medium text-gray-600">变更类型</th>
                       <th className="px-4 py-3 text-left font-medium text-gray-600">原因</th>
+                      <th className="px-4 py-3 text-left font-medium text-gray-600">级联影响</th>
                       <th className="px-4 py-3 text-left font-medium text-gray-600">状态</th>
                       <th className="px-4 py-3 text-left font-medium text-gray-600">申请时间</th>
                       <th className="px-4 py-3 text-left font-medium text-gray-600">需重新公示</th>
@@ -149,14 +250,35 @@ export default function Changes() {
                       const building = buildings.find((b) => b.id === record.buildingId);
                       const badge = STATUS_BADGE[record.status];
                       const shortId = record.id.slice(-6);
+                      const categoryLabel = CHANGE_CATEGORY_CONFIG[record.changeCategory]?.label ?? record.changeCategory;
+                      const cascadeInfo = getCascadeInfoForRecord(record);
+                      const republicationStatus = record.status === 'approved' ? getRepublicationStatus(record) : null;
                       return (
                         <tr key={record.id} className="hover:bg-gray-50">
                           <td className="px-4 py-3 font-mono text-xs">{shortId}</td>
                           <td className="px-4 py-3 font-medium">
                             {building?.buildingNo ?? '-'}
                           </td>
+                          <td className="px-4 py-3">
+                            <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-blue-50 text-blue-700">
+                              {categoryLabel}
+                            </span>
+                          </td>
                           <td className="px-4 py-3 text-gray-600 max-w-[200px] truncate">
                             {record.reason}
+                          </td>
+                          <td className="px-4 py-3">
+                            {cascadeInfo ? (
+                              <div className="flex flex-col gap-1">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-700 w-fit">
+                                  <Link2 size={10} />
+                                  {record.cascadeAffectedBuildingIds.length} 栋
+                                </span>
+                                <span className="text-xs text-gray-500">{cascadeInfo.join('、')}</span>
+                              </div>
+                            ) : (
+                              <span className="text-gray-400 text-xs">无</span>
+                            )}
                           </td>
                           <td className="px-4 py-3">
                             <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium ${badge.bg} ${badge.text}`}>
@@ -206,6 +328,20 @@ export default function Changes() {
                                 >
                                   驳回
                                 </button>
+                              </div>
+                            )}
+                            {record.status === 'approved' && record.cascadeAffectedBuildingIds.length > 0 && (
+                              <div className="flex flex-col items-end gap-1">
+                                {republicationStatus && republicationStatus.cascadeBuildingIds.length > 0 && (
+                                  <span className="text-xs text-orange-600">
+                                    已重新公示（含 {republicationStatus.cascadeBuildingIds.length} 栋级联楼栋）
+                                  </span>
+                                )}
+                                <span className="text-xs text-gray-400">
+                                  {record.cascadeAffectedBuildingIds
+                                    .map((aid) => buildings.find((b) => b.id === aid)?.buildingNo ?? aid.slice(-6))
+                                    .join('、')}
+                                </span>
                               </div>
                             )}
                           </td>

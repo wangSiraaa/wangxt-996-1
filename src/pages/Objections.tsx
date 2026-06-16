@@ -1,22 +1,30 @@
 import { useState, useEffect } from 'react';
 import {
   AlertTriangle, Clock, CheckCircle2, Loader2, MessageSquareWarning,
-  Send, Play, Filter, ListFilter,
+  Send, Play, Filter, ListFilter, Tag,
 } from 'lucide-react';
 import useStore from '@/store';
 import {
-  OBJECTION_STATUS_LABELS, formatDateTime, isObjectionOverdue,
-  type Objection,
+  OBJECTION_STATUS_LABELS, formatDateTime, isObjectionOverdueByCategory,
+  objectionDeadlineRemaining, OBJECTION_CATEGORY_CONFIG,
+  type Objection, type ObjectionCategory,
 } from '@/types';
 import { cn } from '@/lib/utils';
 
 type StatusFilter = 'all' | Objection['status'];
+type CategoryFilter = 'all' | ObjectionCategory;
 
 const STATUS_BADGE_COLORS: Record<Objection['status'], string> = {
   pending: 'bg-amber-100 text-amber-700',
   processing: 'bg-blue-100 text-blue-700',
   resolved: 'bg-green-100 text-green-700',
   overdue: 'bg-red-100 text-red-700',
+};
+
+const CATEGORY_BADGE_COLORS: Record<ObjectionCategory, string> = {
+  safety: 'bg-red-100 text-red-700',
+  price: 'bg-amber-100 text-amber-700',
+  disturbance: 'bg-blue-100 text-blue-700',
 };
 
 const COUNT_CARD_STYLES: { key: StatusFilter; label: string; color: string; icon: React.ReactNode }[] = [
@@ -30,14 +38,15 @@ const COUNT_CARD_STYLES: { key: StatusFilter; label: string; color: string; icon
 export default function Objections() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [projectFilter, setProjectFilter] = useState<string>('all');
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all');
   const [replyMap, setReplyMap] = useState<Record<string, string>>({});
   const [localProcessingIds, setLocalProcessingIds] = useState<Set<string>>(new Set());
 
-  const { objections, projects, publicNotices, processObjection, markObjectionOverdue } = useStore();
+  const { objections, projects, publicNotices, buildings, processObjection, markObjectionOverdue } = useStore();
 
   useEffect(() => {
     objections.forEach((o) => {
-      if ((o.status === 'pending' || o.status === 'processing') && !o.overdue && isObjectionOverdue(o.createdAt)) {
+      if ((o.status === 'pending' || o.status === 'processing') && !o.overdue && isObjectionOverdueByCategory(o.createdAt, o.category)) {
         markObjectionOverdue(o.id);
       }
     });
@@ -55,16 +64,23 @@ export default function Objections() {
     return notice?.projectId ?? '';
   };
 
+  const getBuildingNo = (obj: Objection): string => {
+    const building = buildings.find((b) => b.id === obj.buildingId);
+    return building?.buildingNo ?? '-';
+  };
+
   const enrichedObjections = objections.map((o) => ({
     ...o,
     projectName: getProjectName(o),
     projectId: getProjectId(o),
+    buildingNo: getBuildingNo(o),
     effectiveStatus: localProcessingIds.has(o.id) ? 'processing' as const : o.status,
   }));
 
   const filteredObjections = enrichedObjections.filter((o) => {
     if (statusFilter !== 'all' && o.effectiveStatus !== statusFilter) return false;
     if (projectFilter !== 'all' && o.projectId !== projectFilter) return false;
+    if (categoryFilter !== 'all' && o.category !== categoryFilter) return false;
     return true;
   });
 
@@ -158,6 +174,19 @@ export default function Objections() {
               ))}
             </select>
           </div>
+          <div className="flex items-center gap-2">
+            <Tag className="w-4 h-4 text-gray-400" />
+            <select
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value as CategoryFilter)}
+              className="px-3 py-2 border border-gray-200 rounded-lg bg-white text-sm focus:ring-2 focus:ring-blue-400 focus:border-blue-400 outline-none"
+            >
+              <option value="all">全部类型</option>
+              {(Object.keys(OBJECTION_CATEGORY_CONFIG) as ObjectionCategory[]).map((cat) => (
+                <option key={cat} value={cat}>{OBJECTION_CATEGORY_CONFIG[cat].label}</option>
+              ))}
+            </select>
+          </div>
         </div>
 
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
@@ -167,9 +196,12 @@ export default function Objections() {
                 <tr className="bg-gray-50 border-b border-gray-100">
                   <th className="px-4 py-3 text-left font-semibold text-gray-600">编号</th>
                   <th className="px-4 py-3 text-left font-semibold text-gray-600">项目名称</th>
+                  <th className="px-4 py-3 text-left font-semibold text-gray-600">楼栋</th>
+                  <th className="px-4 py-3 text-left font-semibold text-gray-600">异议类型</th>
                   <th className="px-4 py-3 text-left font-semibold text-gray-600">异议内容</th>
                   <th className="px-4 py-3 text-left font-semibold text-gray-600">联系方式</th>
                   <th className="px-4 py-3 text-left font-semibold text-gray-600">状态</th>
+                  <th className="px-4 py-3 text-left font-semibold text-gray-600">处理时限</th>
                   <th className="px-4 py-3 text-left font-semibold text-gray-600">提交时间</th>
                   <th className="px-4 py-3 text-left font-semibold text-gray-600">处理时间</th>
                   <th className="px-4 py-3 text-left font-semibold text-gray-600">操作</th>
@@ -178,7 +210,7 @@ export default function Objections() {
               <tbody>
                 {filteredObjections.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-16 text-center text-gray-400">
+                    <td colSpan={11} className="px-4 py-16 text-center text-gray-400">
                       <MessageSquareWarning className="w-12 h-12 mx-auto mb-3 opacity-50" />
                       <p className="text-lg">暂无异议记录</p>
                     </td>
@@ -187,6 +219,9 @@ export default function Objections() {
                   filteredObjections.map((obj) => {
                     const isOverdue = obj.overdue || obj.effectiveStatus === 'overdue';
                     const isLocallyProcessing = localProcessingIds.has(obj.id);
+                    const remaining = objectionDeadlineRemaining(obj.createdAt, obj.category);
+                    const deadlineDays = OBJECTION_CATEGORY_CONFIG[obj.category].deadlineDays;
+                    const isDeadlineUrgent = remaining <= 0 || isOverdue;
 
                     return (
                       <tr
@@ -201,6 +236,17 @@ export default function Objections() {
                         </td>
                         <td className="px-4 py-3 font-medium text-gray-800 max-w-[160px] truncate">
                           {obj.projectName}
+                        </td>
+                        <td className="px-4 py-3 text-gray-600">
+                          {obj.buildingNo}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={cn(
+                            'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold',
+                            CATEGORY_BADGE_COLORS[obj.category]
+                          )}>
+                            {OBJECTION_CATEGORY_CONFIG[obj.category].label}
+                          </span>
                         </td>
                         <td className="px-4 py-3 text-gray-600 max-w-[240px]">
                           <p className="truncate" title={obj.content}>{obj.content}</p>
@@ -219,6 +265,17 @@ export default function Objections() {
                               <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-500 text-white animate-pulse">
                                 超期
                               </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <div className={cn('text-xs', isDeadlineUrgent ? 'text-red-600 font-bold' : 'text-gray-500')}>
+                            <span>限期{deadlineDays}天</span>
+                            <span className="mx-1">·</span>
+                            {remaining > 0 ? (
+                              <span>剩余{remaining}天</span>
+                            ) : (
+                              <span className="animate-pulse">已超期{Math.abs(remaining)}天</span>
                             )}
                           </div>
                         </td>

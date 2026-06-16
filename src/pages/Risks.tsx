@@ -3,7 +3,7 @@ import useStore from '@/store';
 import { formatDateTime, type RiskItem } from '@/types';
 import {
   Clock, AlertTriangle, Vote, Wallet, FileText, Lock,
-  ShieldAlert, CheckCircle2,
+  ShieldAlert, CheckCircle2, UserCheck, RefreshCw,
 } from 'lucide-react';
 
 const TYPE_CONFIG: Record<RiskItem['type'], { icon: React.ElementType; label: string }> = {
@@ -13,6 +13,9 @@ const TYPE_CONFIG: Record<RiskItem['type'], { icon: React.ElementType; label: st
   budget_unconfirmed: { icon: Wallet, label: '预算未确认' },
   supervisor_unfiled: { icon: FileText, label: '监理未备案' },
   inspection_locked_change: { icon: Lock, label: '验收后变更' },
+  representative_unconfirmed: { icon: UserCheck, label: '代表人未确认' },
+  cascade_republication: { icon: RefreshCw, label: '级联变更影响' },
+  objection_building_blocked: { icon: ShieldAlert, label: '异议阻塞开工' },
 };
 
 const SEVERITY_COLORS: Record<RiskItem['severity'], { bg: string; text: string; border: string }> = {
@@ -22,12 +25,40 @@ const SEVERITY_COLORS: Record<RiskItem['severity'], { bg: string; text: string; 
 
 type SeverityFilter = 'all' | 'high' | 'medium';
 
+const SCENARIO_CARDS = [
+  {
+    title: '局部变更 → 重新公示',
+    description: '当某栋楼的变更涉及共用管网时，系统自动识别所有关联楼栋并触发级联重新公示，确保每栋受影响楼栋的居民都获得知情权和异议权。',
+    icon: RefreshCw,
+    color: 'text-orange-500',
+    bg: 'bg-orange-50',
+    border: 'border-orange-200',
+  },
+  {
+    title: '异议超期预警',
+    description: '异议提交后未在规定期限内处理完毕，将自动升级为高风险项并阻塞对应楼栋的开工流程，防止未解决争议影响施工安全与合规性。',
+    icon: AlertTriangle,
+    color: 'text-amber-500',
+    bg: 'bg-amber-50',
+    border: 'border-amber-200',
+  },
+  {
+    title: '已验收楼栋禁止回改',
+    description: '已通过验收的楼栋因级联变更被要求回改时，系统自动拦截并标记为阻塞风险，防止已验收成果被非法覆盖，保障工程质量闭环。',
+    icon: ShieldAlert,
+    color: 'text-red-500',
+    bg: 'bg-red-50',
+    border: 'border-red-200',
+  },
+];
+
 export default function Risks() {
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>('all');
   const [typeFilter, setTypeFilter] = useState<RiskItem['type'] | 'all'>('all');
 
   const store = useStore();
   const risks = store.getRisks();
+  const buildings = store.buildings;
 
   const filtered = useMemo(() => {
     return risks.filter((r) => {
@@ -40,9 +71,29 @@ export default function Risks() {
   const highCount = risks.filter((r) => r.severity === 'high').length;
   const mediumCount = risks.filter((r) => r.severity === 'medium').length;
 
+  const getBuildingNo = (buildingId: string) => {
+    const building = buildings.find((b) => b.id === buildingId);
+    return building?.buildingNo;
+  };
+
   return (
     <div className="max-w-6xl mx-auto p-6 space-y-6">
       <h1 className="text-2xl font-bold">红色风险清单</h1>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {SCENARIO_CARDS.map((card) => {
+          const ScenarioIcon = card.icon;
+          return (
+            <div key={card.title} className={`${card.bg} border ${card.border} rounded-xl p-4 space-y-2`}>
+              <div className="flex items-center gap-2">
+                <ScenarioIcon size={18} className={card.color} />
+                <span className={`font-semibold text-sm ${card.color}`}>{card.title}</span>
+              </div>
+              <p className="text-xs text-gray-600 leading-relaxed">{card.description}</p>
+            </div>
+          );
+        })}
+      </div>
 
       <div className="grid grid-cols-3 gap-4">
         <div className="bg-gray-50 border rounded-xl p-4 text-center">
@@ -110,6 +161,7 @@ export default function Risks() {
           const typeCfg = TYPE_CONFIG[risk.type];
           const severityCfg = SEVERITY_COLORS[risk.severity];
           const Icon = typeCfg.icon;
+          const buildingNo = risk.buildingId ? getBuildingNo(risk.buildingId) : undefined;
           return (
             <div
               key={risk.id}
@@ -117,9 +169,16 @@ export default function Risks() {
             >
               <div className="flex items-start justify-between gap-2">
                 <span className="font-semibold text-gray-800 truncate">{risk.projectName}</span>
-                <span className={`shrink-0 px-2.5 py-0.5 rounded-full text-xs font-semibold ${severityCfg.bg} ${severityCfg.text}`}>
-                  {risk.severity === 'high' ? '高风险' : '中风险'}
-                </span>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {buildingNo && (
+                    <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700">
+                      {buildingNo}栋
+                    </span>
+                  )}
+                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${severityCfg.bg} ${severityCfg.text}`}>
+                    {risk.severity === 'high' ? '高风险' : '中风险'}
+                  </span>
+                </div>
               </div>
 
               <div className="flex items-center gap-2">

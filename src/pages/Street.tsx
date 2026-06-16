@@ -21,6 +21,8 @@ import {
   ChevronRight,
   ChevronDown,
   Home,
+  UserCheck,
+  ClipboardCheck,
 } from 'lucide-react';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -47,7 +49,15 @@ export default function Street() {
   const [showProjectModal, setShowProjectModal] = useState(false);
   const [projectForm, setProjectForm] = useState({ name: '', address: '', totalArea: '', totalBudget: '' });
   const [selectedProjectId, setSelectedProjectId] = useState('');
-  const [buildingForm, setBuildingForm] = useState({ buildingNo: '', units: '', households: '', area: '' });
+  const [buildingForm, setBuildingForm] = useState({
+    buildingNo: '',
+    units: '',
+    households: '',
+    area: '',
+    representativeName: '',
+    sharedPipeBuildingIds: [] as string[],
+    budgetAffectedBy: [] as string[],
+  });
   const [showBuildingForm, setShowBuildingForm] = useState(false);
   const [budgetForm, setBudgetForm] = useState<{ sourceType: BudgetSource['sourceType']; amount: string; description: string }>({ sourceType: 'fiscal', amount: '', description: '' });
   const [showBudgetForm, setShowBudgetForm] = useState(false);
@@ -64,6 +74,7 @@ export default function Street() {
     projects, buildings, households, budgetSources, constructionUnits, publicNotices,
     addProject, confirmBudget, addBuilding, addBudgetSource, removeBudgetSource,
     addConstructionUnit, publishNotice, getVoteStats, addHousehold,
+    confirmRepresentative, confirmBuildingSupervisor,
   } = store;
 
   const filteredBuildings = buildings.filter((b) => b.projectId === selectedProjectId);
@@ -94,8 +105,13 @@ export default function Street() {
       units: Number(buildingForm.units) || 0,
       households: Number(buildingForm.households) || 0,
       area: Number(buildingForm.area) || 0,
+      representativeName: buildingForm.representativeName,
+      representativeConfirmed: false,
+      supervisorFiled: false,
+      sharedPipeBuildingIds: buildingForm.sharedPipeBuildingIds,
+      budgetAffectedBy: buildingForm.budgetAffectedBy,
     });
-    setBuildingForm({ buildingNo: '', units: '', households: '', area: '' });
+    setBuildingForm({ buildingNo: '', units: '', households: '', area: '', representativeName: '', sharedPipeBuildingIds: [], budgetAffectedBy: [] });
     setShowBuildingForm(false);
   };
 
@@ -148,6 +164,33 @@ export default function Street() {
     setHouseholdForm({ unitNo: '', floorNo: '', roomNo: '', area: '' });
     setShowHouseholdModal(false);
   };
+
+  const getBuildingNoById = (id: string) => {
+    const b = buildings.find((b) => b.id === id);
+    return b ? b.buildingNo : id;
+  };
+
+  const toggleSharedPipe = (id: string) => {
+    setBuildingForm((f) => ({
+      ...f,
+      sharedPipeBuildingIds: f.sharedPipeBuildingIds.includes(id)
+        ? f.sharedPipeBuildingIds.filter((x) => x !== id)
+        : [...f.sharedPipeBuildingIds, id],
+    }));
+  };
+
+  const toggleBudgetAffected = (id: string) => {
+    setBuildingForm((f) => ({
+      ...f,
+      budgetAffectedBy: f.budgetAffectedBy.includes(id)
+        ? f.budgetAffectedBy.filter((x) => x !== id)
+        : [...f.budgetAffectedBy, id],
+    }));
+  };
+
+  const otherBuildingsInProject = buildings.filter(
+    (b) => b.projectId === selectedProjectId
+  );
 
   const voteStats = activeNotice ? getVoteStats(activeNotice.id) : null;
   const remaining = activeNotice ? daysRemaining(activeNotice.endDate) : 0;
@@ -363,22 +406,70 @@ export default function Street() {
                               <span className="text-gray-400">正常</span>
                             )}
                           </td>
+                          <td className="px-2 py-3 text-center">
+                            {b.representativeConfirmed ? (
+                              <CheckCircle2 size={16} className="text-green-500 inline" />
+                            ) : (
+                              <XCircle size={16} className="text-red-400 inline" />
+                            )}
+                          </td>
+                          <td className="px-2 py-3 text-center">
+                            {b.supervisorFiled ? (
+                              <CheckCircle2 size={16} className="text-green-500 inline" />
+                            ) : (
+                              <XCircle size={16} className="text-red-400 inline" />
+                            )}
+                          </td>
+                          <td className="px-2 py-3" onClick={(e) => e.stopPropagation()}>
+                            <div className="flex flex-wrap gap-1">
+                              {b.sharedPipeBuildingIds.length > 0 && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-50 text-purple-700">
+                                  共享管网: {b.sharedPipeBuildingIds.map((id) => getBuildingNoById(id)).join(', ')}
+                                </span>
+                              )}
+                              {b.budgetAffectedBy.length > 0 && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700">
+                                  共享预算: {b.budgetAffectedBy.map((id) => getBuildingNoById(id)).join(', ')}
+                                </span>
+                              )}
+                            </div>
+                          </td>
                           <td className="px-2 py-3 text-right" onClick={(e) => e.stopPropagation()}>
-                            <button
-                              onClick={() => {
-                                setSelectedBuildingId(b.id);
-                                setShowHouseholdModal(true);
-                              }}
-                              disabled={b.inspectionLocked}
-                              className={`inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded-lg transition-colors ${
-                                b.inspectionLocked
-                                  ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                                  : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
-                              }`}
-                            >
-                              <Plus size={14} />
-                              录入分户
-                            </button>
+                            <div className="flex items-center gap-1 justify-end">
+                              {!b.representativeConfirmed && (
+                                <button
+                                  onClick={() => confirmRepresentative(b.id)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-lg transition-colors bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                                >
+                                  <UserCheck size={14} />
+                                  确认代表人
+                                </button>
+                              )}
+                              {!b.supervisorFiled && (
+                                <button
+                                  onClick={() => confirmBuildingSupervisor(b.id)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-lg transition-colors bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                                >
+                                  <ClipboardCheck size={14} />
+                                  楼栋监理备案
+                                </button>
+                              )}
+                              <button
+                                onClick={() => {
+                                  setSelectedBuildingId(b.id);
+                                  setShowHouseholdModal(true);
+                                }}
+                                disabled={b.inspectionLocked}
+                                className={`inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded-lg transition-colors ${
+                                  b.inspectionLocked
+                                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                    : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+                                }`}
+                              >
+                                <Plus size={14} />
+                                录入分户
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       </tbody>
@@ -444,7 +535,7 @@ export default function Street() {
 
           {showBuildingForm && (
             <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-              <div className="bg-white rounded-xl p-6 w-full max-w-md space-y-4 shadow-xl">
+              <div className="bg-white rounded-xl p-6 w-full max-w-lg space-y-4 shadow-xl max-h-[90vh] overflow-y-auto">
                 <h2 className="text-lg font-semibold">添加楼栋</h2>
                 <div className="space-y-3">
                   <input
@@ -474,10 +565,55 @@ export default function Street() {
                     onChange={(e) => setBuildingForm((f) => ({ ...f, area: e.target.value }))}
                     className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   />
+                  <input
+                    placeholder="代表人姓名"
+                    value={buildingForm.representativeName}
+                    onChange={(e) => setBuildingForm((f) => ({ ...f, representativeName: e.target.value }))}
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  />
+                  {otherBuildingsInProject.length > 0 && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">共享管网楼栋</label>
+                      <div className="border rounded-lg p-2 space-y-1 max-h-32 overflow-y-auto">
+                        {otherBuildingsInProject.map((ob) => (
+                          <label key={ob.id} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-gray-50 px-2 py-1 rounded">
+                            <input
+                              type="checkbox"
+                              checked={buildingForm.sharedPipeBuildingIds.includes(ob.id)}
+                              onChange={() => toggleSharedPipe(ob.id)}
+                              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            {ob.buildingNo}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {otherBuildingsInProject.length > 0 && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">共享预算楼栋</label>
+                      <div className="border rounded-lg p-2 space-y-1 max-h-32 overflow-y-auto">
+                        {otherBuildingsInProject.map((ob) => (
+                          <label key={ob.id} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-gray-50 px-2 py-1 rounded">
+                            <input
+                              type="checkbox"
+                              checked={buildingForm.budgetAffectedBy.includes(ob.id)}
+                              onChange={() => toggleBudgetAffected(ob.id)}
+                              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            {ob.buildingNo}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div className="flex justify-end gap-3">
                   <button
-                    onClick={() => setShowBuildingForm(false)}
+                    onClick={() => {
+                      setShowBuildingForm(false);
+                      setBuildingForm({ buildingNo: '', units: '', households: '', area: '', representativeName: '', sharedPipeBuildingIds: [], budgetAffectedBy: [] });
+                    }}
                     className="px-4 py-2 text-gray-600 hover:text-gray-800"
                   >
                     取消

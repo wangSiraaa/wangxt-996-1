@@ -3,8 +3,10 @@ import { persist } from 'zustand/middleware';
 import {
   Project, Building, Household, BudgetSource, ConstructionUnit,
   PublicNotice, Vote, Objection, ConstructionPhase, Inspection,
-  Rework, ChangeRecord, AuditLog, RiskItem, Role,
-  generateId, isSevenDaysFull, isObjectionOverdue, SEVEN_DAYS_MS,
+  Rework, ChangeRecord, AuditLog, RiskItem, Role, ChangeCategory,
+  generateId, isSevenDaysFull, SEVEN_DAYS_MS,
+  OBJECTION_CATEGORY_CONFIG, type ObjectionCategory,
+  isObjectionOverdueByCategory, objectionDeadlineRemaining,
 } from '@/types';
 
 interface AppState {
@@ -44,11 +46,11 @@ interface AppState {
   updateConstructionUnit: (id: string, updates: Partial<ConstructionUnit>) => void;
 
   publishNotice: (projectId: string, startDate: string, endDate: string) => string;
-  republishNotice: (noticeId: string) => void;
+  republishNotice: (noticeId: string, cascadeBuildingIds?: string[], triggeredByChangeId?: string) => void;
 
   addVote: (noticeId: string, residentName: string, approve: boolean) => void;
 
-  addObjection: (noticeId: string, content: string, contactInfo: string) => string;
+  addObjection: (noticeId: string, buildingId: string, category: ObjectionCategory, content: string, contactInfo: string) => string;
   processObjection: (id: string, reply: string) => void;
   markObjectionOverdue: (id: string) => void;
 
@@ -60,15 +62,20 @@ interface AppState {
   addInspection: (i: Omit<Inspection, 'id'>) => string;
   addRework: (r: Omit<Rework, 'id'>) => string;
 
-  submitChange: (projectId: string, buildingId: string, reason: string) => string;
+  submitChange: (projectId: string, buildingId: string, changeCategory: ChangeCategory, reason: string) => string;
   approveChange: (id: string) => void;
   rejectChange: (id: string) => void;
+
+  confirmRepresentative: (buildingId: string) => void;
+  confirmBuildingSupervisor: (buildingId: string) => void;
 
   addAuditLog: (projectId: string, action: string, detail: string) => void;
 
   getRisks: () => RiskItem[];
   canStartConstruction: (projectId: string) => { canStart: boolean; reasons: string[] };
+  canBuildingStartConstruction: (buildingId: string) => { canStart: boolean; reasons: string[] };
   getVoteStats: (noticeId: string) => { total: number; approve: number; oppose: number; rate: number };
+  getCascadeAffectedBuildings: (buildingId: string) => string[];
 }
 
 const useStore = create<AppState>()(
@@ -205,13 +212,17 @@ const useStore = create<AppState>()(
       publishNotice: (projectId, startDate, endDate) => {
         const id = generateId();
         const fullSevenDays = isSevenDaysFull(startDate, endDate);
+        const projectBuildings = get().buildings.filter((b) => b.projectId === projectId);
         const notice: PublicNotice = {
           id,
           projectId,
+          buildingIds: projectBuildings.map((b) => b.id),
           startDate,
           endDate,
           fullSevenDays,
           status: 'active',
+          triggeredByChangeId: '',
+          cascadeAffectedBuildingIds: [],
         };
         set((s) => ({
           publicNotices: [...s.publicNotices, notice],
@@ -223,7 +234,7 @@ const useStore = create<AppState>()(
         return id;
       },
 
-      republishNotice: (noticeId) => {
+      republishNotice: (noticeId, cascadeBuildingIds: string[] = [], triggeredByChangeId: string = '') => {
         const notice = get().publicNotices.find((n) => n.id === noticeId);
         if (!notice) return;
         const now = new Date();
@@ -231,10 +242,13 @@ const useStore = create<AppState>()(
         const newNotice: PublicNotice = {
           id: generateId(),
           projectId: notice.projectId,
+          buildingIds: [...new Set([...notice.buildingIds, ...cascadeBuildingIds])],
           startDate: now.toISOString(),
           endDate: newEnd.toISOString(),
           fullSevenDays: true,
           status: 'republished',
+          triggeredByChangeId,
+          cascadeAffectedBuildingIds: cascadeBuildingIds,
         };
         set((s) => ({
           publicNotices: [...s.publicNotices, newNotice],
@@ -257,12 +271,15 @@ const useStore = create<AppState>()(
         }
       },
 
-      addObjection: (noticeId, content, contactInfo) => {
+      addObjection: (noticeId, buildingId, category, content, contactInfo) => {
         const id = generateId();
         const now = new Date().toISOString();
+        const deadlineDays = OBJECTION_CATEGORY_CONFIG[category].deadlineDays;
         const objection: Objection = {
           id,
           noticeId,
+          buildingId,
+          category,
           content,
           contactInfo,
           status: 'pending',
@@ -270,6 +287,7 @@ const useStore = create<AppState>()(
           createdAt: now,
           processedAt: '',
           overdue: false,
+          deadlineDays,
         };
         const notice = get().publicNotices.find((n) => n.id === noticeId);
         set((s) => ({ objections: [...s.objections, objection] }));
@@ -373,14 +391,16 @@ const useStore = create<AppState>()(
         return id;
       },
 
-      submitChange: (projectId, buildingId, reason) => {
+      submitChange: (projectId, buildingId, changeCategory, reason) => {
         const id = generateId();
         const building = get().buildings.find((b) => b.id === buildingId);
         const requiresRepublication = building?.inspectionLocked ?? false;
+        const cascadeAffectedBuildingIds = get().getCascadeAffectedBuildings(buildingId);
         const record: ChangeRecord = {
           id,
           projectId,
           buildingId,
+          changeCategory,
           reason,
           status: 'pending',
           appliedAt: new Date().toISOString(),
@@ -388,6 +408,7 @@ const useStore = create<AppState>()(
           requiresRepublication,
           rePublicationStart: '',
           rePublicationEnd: '',
+          cascadeAffectedBuildingIds,
         };
         set((s) => ({ changeRecords: [...s.changeRecords, record] }));
         get().addAuditLog(projectId, '提交变更', `变更原因: ${reason.substring(0, 50)}${requiresRepublication ? ' (需重新公示)' : ''}`);
@@ -410,12 +431,16 @@ const useStore = create<AppState>()(
         set((s) => ({
           changeRecords: s.changeRecords.map((r) => (r.id === id ? { ...r, ...updates } : r)),
         }));
-        if (record.requiresRepublication) {
+
+        const cascadeIds = record.cascadeAffectedBuildingIds;
+        const allAffectedIds = [...new Set([record.buildingId, ...cascadeIds])];
+
+        if (record.requiresRepublication || cascadeIds.length > 0) {
           const activeNotice = get().publicNotices.find(
             (n) => n.projectId === record.projectId && (n.status === 'active' || n.status === 'republished')
           );
           if (activeNotice) {
-            get().republishNotice(activeNotice.id);
+            get().republishNotice(activeNotice.id, allAffectedIds, id);
           } else {
             get().publishNotice(
               record.projectId,
@@ -424,7 +449,31 @@ const useStore = create<AppState>()(
             );
           }
         }
-        get().addAuditLog(record.projectId, '审批变更', `变更已批准${record.requiresRepublication ? '，已触发重新公示' : ''}`);
+
+        if (cascadeIds.length > 0) {
+          const affectedBuildingNos = cascadeIds
+            .map((bid) => get().buildings.find((b) => b.id === bid)?.buildingNo)
+            .filter(Boolean)
+            .join('、');
+          get().addAuditLog(
+            record.projectId,
+            '级联影响',
+            `变更级联影响楼栋: ${affectedBuildingNos}，公示期/投票/预算需重新确认`
+          );
+
+          cascadeIds.forEach((bid) => {
+            const b = get().buildings.find((bld) => bld.id === bid);
+            if (b && b.inspectionLocked) {
+              get().addAuditLog(
+                record.projectId,
+                '已验收楼栋受影响',
+                `楼栋 ${b.buildingNo} 已验收锁定但受级联影响，禁止回改施工计划`
+              );
+            }
+          });
+        }
+
+        get().addAuditLog(record.projectId, '审批变更', `变更已批准${record.requiresRepublication ? '，已触发重新公示' : ''}${cascadeIds.length > 0 ? `，级联影响 ${cascadeIds.length} 栋楼` : ''}`);
       },
 
       rejectChange: (id) => {
@@ -453,6 +502,26 @@ const useStore = create<AppState>()(
         set((s) => ({ auditLogs: [...s.auditLogs, log] }));
       },
 
+      confirmRepresentative: (buildingId) => {
+        const building = get().buildings.find((b) => b.id === buildingId);
+        set((s) => ({
+          buildings: s.buildings.map((b) => (b.id === buildingId ? { ...b, representativeConfirmed: true } : b)),
+        }));
+        if (building) {
+          get().addAuditLog(building.projectId, '确认代表人', `楼栋 ${building.buildingNo} 代表人已确认`);
+        }
+      },
+
+      confirmBuildingSupervisor: (buildingId) => {
+        const building = get().buildings.find((b) => b.id === buildingId);
+        set((s) => ({
+          buildings: s.buildings.map((b) => (b.id === buildingId ? { ...b, supervisorFiled: true } : b)),
+        }));
+        if (building) {
+          get().addAuditLog(building.projectId, '楼栋监理备案', `楼栋 ${building.buildingNo} 监理已备案`);
+        }
+      },
+
       getRisks: () => {
         const state = get();
         const risks: RiskItem[] = [];
@@ -468,6 +537,7 @@ const useStore = create<AppState>()(
               risks.push({
                 id: generateId(),
                 projectId: notice.projectId,
+                buildingId: '',
                 projectName: project?.name || '未知项目',
                 type: 'seven_day',
                 description: `公示未满七天，剩余 ${Math.ceil((end - now) / (24 * 60 * 60 * 1000))} 天`,
@@ -480,15 +550,37 @@ const useStore = create<AppState>()(
         state.objections
           .filter((o) => o.status === 'pending' || o.status === 'processing')
           .forEach((obj) => {
-            if (isObjectionOverdue(obj.createdAt)) {
+            const overdue = isObjectionOverdueByCategory(obj.createdAt, obj.category);
+            if (overdue) {
               const notice = state.publicNotices.find((n) => n.id === obj.noticeId);
               const project = notice ? state.projects.find((p) => p.id === notice.projectId) : null;
+              const building = state.buildings.find((b) => b.id === obj.buildingId);
+              const categoryLabel = OBJECTION_CATEGORY_CONFIG[obj.category]?.label || obj.category;
               risks.push({
                 id: generateId(),
                 projectId: notice?.projectId || '',
+                buildingId: obj.buildingId,
                 projectName: project?.name || '未知项目',
                 type: 'objection_overdue',
-                description: `异议超期未处理: ${obj.content.substring(0, 30)}...`,
+                description: `${building ? `楼栋${building.buildingNo} ` : ''}${categoryLabel}超期未处理: ${obj.content.substring(0, 30)}...`,
+                severity: obj.category === 'safety' ? 'high' : 'medium',
+                createdAt: new Date().toISOString(),
+              });
+            }
+          });
+
+        state.buildings
+          .filter((b) => !b.representativeConfirmed)
+          .forEach((building) => {
+            const project = state.projects.find((p) => p.id === building.projectId);
+            if (project && (project.status === 'publishing' || project.status === 'approved')) {
+              risks.push({
+                id: generateId(),
+                projectId: building.projectId,
+                buildingId: building.id,
+                projectName: project.name,
+                type: 'representative_unconfirmed',
+                description: `楼栋 ${building.buildingNo} 代表人未确认`,
                 severity: 'high',
                 createdAt: new Date().toISOString(),
               });
@@ -506,6 +598,7 @@ const useStore = create<AppState>()(
                 risks.push({
                   id: generateId(),
                   projectId: project.id,
+                  buildingId: '',
                   projectName: project.name,
                   type: 'vote_insufficient',
                   description: `投票赞成率 ${(voteStats.rate * 100).toFixed(1)}%，未达50%`,
@@ -519,6 +612,7 @@ const useStore = create<AppState>()(
               risks.push({
                 id: generateId(),
                 projectId: project.id,
+                buildingId: '',
                 projectName: project.name,
                 type: 'budget_unconfirmed',
                 description: '预算未确认',
@@ -531,6 +625,7 @@ const useStore = create<AppState>()(
               risks.push({
                 id: generateId(),
                 projectId: project.id,
+                buildingId: '',
                 projectName: project.name,
                 type: 'supervisor_unfiled',
                 description: '监理未备案',
@@ -549,6 +644,7 @@ const useStore = create<AppState>()(
               risks.push({
                 id: generateId(),
                 projectId: change.projectId,
+                buildingId: building.id,
                 projectName: project?.name || '未知项目',
                 type: 'inspection_locked_change',
                 description: `已验收楼栋 ${building.buildingNo} 变更，需重新公示`,
@@ -557,6 +653,48 @@ const useStore = create<AppState>()(
               });
             }
           });
+
+        state.changeRecords
+          .filter((c) => c.status === 'approved' && c.cascadeAffectedBuildingIds.length > 0)
+          .forEach((change) => {
+            const project = state.projects.find((p) => p.id === change.projectId);
+            change.cascadeAffectedBuildingIds.forEach((bid) => {
+              const affectedBuilding = state.buildings.find((b) => b.id === bid);
+              if (affectedBuilding) {
+                risks.push({
+                  id: generateId(),
+                  projectId: change.projectId,
+                  buildingId: bid,
+                  projectName: project?.name || '未知项目',
+                  type: 'cascade_republication',
+                  description: `楼栋 ${affectedBuilding.buildingNo} 受级联变更影响，公示期/投票/预算需重算`,
+                  severity: 'high',
+                  createdAt: new Date().toISOString(),
+                });
+              }
+            });
+          });
+
+        state.buildings.forEach((building) => {
+          if (building.inspectionLocked) return;
+          const buildingObjections = state.objections.filter((o) => o.buildingId === building.id);
+          const overdueObjections = buildingObjections.filter(
+            (o) => o.status === 'overdue' || (isObjectionOverdueByCategory(o.createdAt, o.category) && (o.status === 'pending' || o.status === 'processing'))
+          );
+          if (overdueObjections.length > 0) {
+            const project = state.projects.find((p) => p.id === building.projectId);
+            risks.push({
+              id: generateId(),
+              projectId: building.projectId,
+              buildingId: building.id,
+              projectName: project?.name || '未知项目',
+              type: 'objection_building_blocked',
+              description: `楼栋 ${building.buildingNo} 有 ${overdueObjections.length} 条超期异议未答复，禁止开工`,
+              severity: 'high',
+              createdAt: new Date().toISOString(),
+            });
+          }
+        });
 
         return risks;
       },
@@ -620,6 +758,82 @@ const useStore = create<AppState>()(
         const oppose = total - approve;
         const rate = total > 0 ? approve / total : 0;
         return { total, approve, oppose, rate };
+      },
+
+      canBuildingStartConstruction: (buildingId) => {
+        const state = get();
+        const building = state.buildings.find((b) => b.id === buildingId);
+        const reasons: string[] = [];
+        if (!building) return { canStart: false, reasons: ['楼栋不存在'] };
+
+        const project = state.projects.find((p) => p.id === building.projectId);
+
+        if (!building.representativeConfirmed) {
+          reasons.push('代表人未确认');
+        }
+
+        if (!building.supervisorFiled) {
+          reasons.push('楼栋监理未备案');
+        }
+
+        if (project && !project.supervisorFiled) {
+          reasons.push('项目监理未备案');
+        }
+
+        const buildingObjections = state.objections.filter((o) => o.buildingId === buildingId);
+        const overdueObjections = buildingObjections.filter(
+          (o) => o.status === 'overdue' || (isObjectionOverdueByCategory(o.createdAt, o.category) && (o.status === 'pending' || o.status === 'processing'))
+        );
+        if (overdueObjections.length > 0) {
+          reasons.push(`有 ${overdueObjections.length} 条异议超期未答复`);
+        }
+
+        const unresolvedObjections = buildingObjections.filter(
+          (o) => o.status === 'pending' || o.status === 'processing'
+        );
+        if (unresolvedObjections.length > 0 && overdueObjections.length === 0) {
+          reasons.push(`有 ${unresolvedObjections.length} 条异议未处理`);
+        }
+
+        const cascadedChanges = state.changeRecords.filter(
+          (c) => c.status === 'approved' && c.cascadeAffectedBuildingIds.includes(buildingId)
+        );
+        if (cascadedChanges.length > 0 && building.inspectionLocked) {
+          reasons.push('受级联变更影响，已验收楼栋禁止回改施工计划');
+        }
+
+        return { canStart: reasons.length === 0, reasons };
+      },
+
+      getCascadeAffectedBuildings: (buildingId) => {
+        const state = get();
+        const building = state.buildings.find((b) => b.id === buildingId);
+        if (!building) return [];
+
+        const affectedIds = new Set<string>();
+
+        building.sharedPipeBuildingIds.forEach((pid) => {
+          if (pid !== buildingId) affectedIds.add(pid);
+        });
+
+        building.budgetAffectedBy.forEach((bid) => {
+          const otherBuilding = state.buildings.find((b) => b.id === bid);
+          if (otherBuilding && otherBuilding.id !== buildingId) {
+            affectedIds.add(otherBuilding.id);
+          }
+        });
+
+        state.buildings.forEach((other) => {
+          if (other.id === buildingId) return;
+          if (other.sharedPipeBuildingIds.includes(buildingId)) {
+            affectedIds.add(other.id);
+          }
+          if (other.budgetAffectedBy.includes(buildingId)) {
+            affectedIds.add(other.id);
+          }
+        });
+
+        return Array.from(affectedIds);
       },
     }),
     {

@@ -10,6 +10,23 @@ export interface Project {
   createdAt: string;
 }
 
+export type ObjectionCategory = 'safety' | 'price' | 'disturbance';
+export type ChangeCategory = 'noise' | 'elevator' | 'fire' | 'pipe' | 'other';
+
+export const OBJECTION_CATEGORY_CONFIG: Record<ObjectionCategory, { label: string; deadlineDays: number; urgency: 'urgent' | 'normal' | 'low' }> = {
+  safety: { label: '安全类紧急意见', deadlineDays: 2, urgency: 'urgent' },
+  price: { label: '价格类异议', deadlineDays: 5, urgency: 'normal' },
+  disturbance: { label: '施工扰民投诉', deadlineDays: 3, urgency: 'low' },
+};
+
+export const CHANGE_CATEGORY_CONFIG: Record<ChangeCategory, { label: string }> = {
+  noise: { label: '施工噪音' },
+  elevator: { label: '加装电梯' },
+  fire: { label: '临时消防整改' },
+  pipe: { label: '管网变更' },
+  other: { label: '其他' },
+};
+
 export interface Building {
   id: string;
   projectId: string;
@@ -18,6 +35,11 @@ export interface Building {
   households: number;
   area: number;
   inspectionLocked: boolean;
+  sharedPipeBuildingIds: string[];
+  representativeName: string;
+  representativeConfirmed: boolean;
+  supervisorFiled: boolean;
+  budgetAffectedBy: string[];
 }
 
 export interface Household {
@@ -49,10 +71,13 @@ export interface ConstructionUnit {
 export interface PublicNotice {
   id: string;
   projectId: string;
+  buildingIds: string[];
   startDate: string;
   endDate: string;
   fullSevenDays: boolean;
   status: 'active' | 'expired' | 'republished';
+  triggeredByChangeId: string;
+  cascadeAffectedBuildingIds: string[];
 }
 
 export interface Vote {
@@ -66,6 +91,8 @@ export interface Vote {
 export interface Objection {
   id: string;
   noticeId: string;
+  buildingId: string;
+  category: ObjectionCategory;
   content: string;
   contactInfo: string;
   status: 'pending' | 'processing' | 'resolved' | 'overdue';
@@ -73,6 +100,7 @@ export interface Objection {
   createdAt: string;
   processedAt: string;
   overdue: boolean;
+  deadlineDays: number;
 }
 
 export interface ConstructionPhase {
@@ -107,6 +135,7 @@ export interface ChangeRecord {
   id: string;
   projectId: string;
   buildingId: string;
+  changeCategory: ChangeCategory;
   reason: string;
   status: 'pending' | 'approved' | 'rejected';
   appliedAt: string;
@@ -114,6 +143,7 @@ export interface ChangeRecord {
   requiresRepublication: boolean;
   rePublicationStart: string;
   rePublicationEnd: string;
+  cascadeAffectedBuildingIds: string[];
 }
 
 export interface AuditLog {
@@ -129,8 +159,9 @@ export interface AuditLog {
 export interface RiskItem {
   id: string;
   projectId: string;
+  buildingId: string;
   projectName: string;
-  type: 'seven_day' | 'objection_overdue' | 'vote_insufficient' | 'budget_unconfirmed' | 'supervisor_unfiled' | 'inspection_locked_change';
+  type: 'seven_day' | 'objection_overdue' | 'vote_insufficient' | 'budget_unconfirmed' | 'supervisor_unfiled' | 'inspection_locked_change' | 'representative_unconfirmed' | 'cascade_republication' | 'objection_building_blocked';
   description: string;
   severity: 'high' | 'medium';
   createdAt: string;
@@ -140,6 +171,24 @@ export type Role = 'street' | 'resident' | 'supervisor';
 
 export const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 export const OBJECTION_DEADLINE_DAYS = 5;
+
+export function getObjectionDeadlineDays(category: ObjectionCategory): number {
+  return OBJECTION_CATEGORY_CONFIG[category].deadlineDays;
+}
+
+export function isObjectionOverdueByCategory(createdAt: string, category: ObjectionCategory): boolean {
+  const created = new Date(createdAt).getTime();
+  const deadlineDays = getObjectionDeadlineDays(category);
+  const deadline = created + deadlineDays * 24 * 60 * 60 * 1000;
+  return Date.now() > deadline;
+}
+
+export function objectionDeadlineRemaining(createdAt: string, category: ObjectionCategory): number {
+  const created = new Date(createdAt).getTime();
+  const deadlineDays = getObjectionDeadlineDays(category);
+  const deadline = created + deadlineDays * 24 * 60 * 60 * 1000;
+  return Math.ceil((deadline - Date.now()) / (24 * 60 * 60 * 1000));
+}
 
 export const SOURCE_TYPE_LABELS: Record<BudgetSource['sourceType'], string> = {
   fiscal: '财政拨款',

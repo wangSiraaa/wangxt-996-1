@@ -7,8 +7,9 @@ import {
 import useStore from '@/store';
 import {
   formatDate, formatDateTime, daysRemaining, SOURCE_TYPE_LABELS,
-  OBJECTION_STATUS_LABELS,
-  type PublicNotice, type Objection,
+  OBJECTION_STATUS_LABELS, OBJECTION_CATEGORY_CONFIG,
+  objectionDeadlineRemaining,
+  type PublicNotice, type Objection, type ObjectionCategory,
 } from '@/types';
 import { cn } from '@/lib/utils';
 
@@ -30,6 +31,8 @@ export default function Resident() {
   const [voteSubmitted, setVoteSubmitted] = useState(false);
 
   const [selectedNoticeForObjection, setSelectedNoticeForObjection] = useState<string>('');
+  const [selectedCategory, setSelectedCategory] = useState<ObjectionCategory>('safety');
+  const [selectedBuildingId, setSelectedBuildingId] = useState<string>('');
   const [objectionContent, setObjectionContent] = useState('');
   const [contactInfo, setContactInfo] = useState('');
   const [objectionSubmitted, setObjectionSubmitted] = useState(false);
@@ -70,12 +73,13 @@ export default function Resident() {
   };
 
   const handleObjection = () => {
-    if (!selectedNoticeForObjection || !objectionContent.trim() || !contactInfo.trim()) return;
-    const id = addObjection(selectedNoticeForObjection, objectionContent.trim(), contactInfo.trim());
+    if (!selectedNoticeForObjection || !selectedBuildingId || !objectionContent.trim() || !contactInfo.trim()) return;
+    const id = addObjection(selectedNoticeForObjection, selectedBuildingId, selectedCategory, objectionContent.trim(), contactInfo.trim());
     setLastObjectionId(id);
     setObjectionSubmitted(true);
     setObjectionContent('');
     setContactInfo('');
+    setSelectedBuildingId('');
     setTimeout(() => setObjectionSubmitted(false), 4000);
   };
 
@@ -474,6 +478,7 @@ export default function Resident() {
                     value={selectedNoticeForObjection}
                     onChange={(e) => {
                       setSelectedNoticeForObjection(e.target.value);
+                      setSelectedBuildingId('');
                       setObjectionSubmitted(false);
                     }}
                     className="w-full px-4 py-3 border border-gray-200 rounded-lg text-lg bg-white focus:ring-2 focus:ring-amber-400 focus:border-amber-400 outline-none"
@@ -492,6 +497,65 @@ export default function Resident() {
 
                 {selectedNoticeForObjection && (
                   <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 space-y-5">
+                    <div>
+                      <label className="block text-base font-semibold text-gray-700 mb-3">
+                        异议类别
+                      </label>
+                      <div className="grid grid-cols-3 gap-3">
+                        {(Object.keys(OBJECTION_CATEGORY_CONFIG) as ObjectionCategory[]).map((cat) => {
+                          const config = OBJECTION_CATEGORY_CONFIG[cat];
+                          const isSelected = selectedCategory === cat;
+                          const colorMap: Record<ObjectionCategory, { border: string; bg: string; text: string; ring: string }> = {
+                            safety: { border: 'border-red-500', bg: 'bg-red-50', text: 'text-red-700', ring: 'ring-red-200' },
+                            price: { border: 'border-amber-500', bg: 'bg-amber-50', text: 'text-amber-700', ring: 'ring-amber-200' },
+                            disturbance: { border: 'border-blue-500', bg: 'bg-blue-50', text: 'text-blue-700', ring: 'ring-blue-200' },
+                          };
+                          const colors = colorMap[cat];
+                          return (
+                            <button
+                              key={cat}
+                              onClick={() => setSelectedCategory(cat)}
+                              className={cn(
+                                'flex flex-col items-center gap-1.5 py-4 rounded-xl border-2 transition-all font-semibold',
+                                isSelected
+                                  ? `${colors.border} ${colors.bg} ${colors.text} shadow-md`
+                                  : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300'
+                              )}
+                            >
+                              <span className="text-sm">{config.label}</span>
+                              <span className="text-xs font-normal opacity-70">{config.deadlineDays}个工作日内处理</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <p className="mt-2 text-sm text-gray-500">
+                        {OBJECTION_CATEGORY_CONFIG[selectedCategory].label}：{OBJECTION_CATEGORY_CONFIG[selectedCategory].deadlineDays}个工作日内处理
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="block text-base font-semibold text-gray-700 mb-3">
+                        关联楼栋
+                      </label>
+                      <select
+                        value={selectedBuildingId}
+                        onChange={(e) => setSelectedBuildingId(e.target.value)}
+                        className="w-full px-4 py-3 border border-gray-200 rounded-lg text-lg bg-white focus:ring-2 focus:ring-amber-400 focus:border-amber-400 outline-none"
+                      >
+                        <option value="">请选择楼栋</option>
+                        {(() => {
+                          const notice = activeNotices.find((n) => n.id === selectedNoticeForObjection);
+                          if (!notice) return null;
+                          const projectBuildings = getBuildings(notice.projectId);
+                          return projectBuildings.map((b) => (
+                            <option key={b.id} value={b.id}>
+                              {b.buildingNo}（{b.units}单元 · {b.households}户）
+                            </option>
+                          ));
+                        })()}
+                      </select>
+                    </div>
+
                     <div>
                       <label className="block text-base font-semibold text-gray-700 mb-3">
                         异议内容
@@ -518,10 +582,10 @@ export default function Resident() {
                     </div>
                     <button
                       onClick={handleObjection}
-                      disabled={!objectionContent.trim() || !contactInfo.trim()}
+                      disabled={!selectedBuildingId || !objectionContent.trim() || !contactInfo.trim()}
                       className={cn(
                         'w-full py-4 rounded-xl text-lg font-bold transition-all flex items-center justify-center gap-2',
-                        objectionContent.trim() && contactInfo.trim()
+                        selectedBuildingId && objectionContent.trim() && contactInfo.trim()
                           ? 'bg-amber-500 text-white hover:bg-amber-600 shadow-md'
                           : 'bg-gray-200 text-gray-400 cursor-not-allowed'
                       )}
@@ -539,7 +603,9 @@ export default function Resident() {
                     <p className="text-gray-500 text-base">
                       异议编号：<span className="font-mono text-amber-600">{lastObjectionId}</span>
                     </p>
-                    <p className="text-gray-400 text-sm mt-2">我们将在5个工作日内处理您的异议</p>
+                    <p className="text-gray-400 text-sm mt-2">
+                      {OBJECTION_CATEGORY_CONFIG[selectedCategory].label}将在{OBJECTION_CATEGORY_CONFIG[selectedCategory].deadlineDays}个工作日内处理
+                    </p>
                   </div>
                 )}
 
@@ -550,30 +616,58 @@ export default function Resident() {
                       {userObjections.map((obj) => {
                         const notice = publicNotices.find((n) => n.id === obj.noticeId);
                         const project = notice ? getProject(notice.projectId) : null;
+                        const building = buildings.find((b) => b.id === obj.buildingId);
+                        const remaining = objectionDeadlineRemaining(obj.createdAt, obj.category);
+                        const categoryColorMap: Record<ObjectionCategory, string> = {
+                          safety: 'bg-red-100 text-red-700',
+                          price: 'bg-amber-100 text-amber-700',
+                          disturbance: 'bg-blue-100 text-blue-700',
+                        };
                         return (
                           <div
                             key={obj.id}
                             className="bg-gray-50 rounded-lg p-4 space-y-2"
                           >
-                            <div className="flex items-center justify-between">
+                            <div className="flex items-center justify-between flex-wrap gap-2">
                               <span className="text-sm font-semibold text-gray-700">
                                 {project?.name ?? '未知项目'}
                               </span>
-                              <span className={cn(
-                                'px-2.5 py-0.5 rounded-full text-xs font-semibold',
-                                objectionStatusColor[obj.status]
-                              )}>
-                                {OBJECTION_STATUS_LABELS[obj.status]}
-                              </span>
+                              <div className="flex items-center gap-2">
+                                <span className={cn(
+                                  'px-2.5 py-0.5 rounded-full text-xs font-semibold',
+                                  categoryColorMap[obj.category]
+                                )}>
+                                  {OBJECTION_CATEGORY_CONFIG[obj.category].label}
+                                </span>
+                                <span className={cn(
+                                  'px-2.5 py-0.5 rounded-full text-xs font-semibold',
+                                  objectionStatusColor[obj.status]
+                                )}>
+                                  {OBJECTION_STATUS_LABELS[obj.status]}
+                                </span>
+                              </div>
                             </div>
+                            {building && (
+                              <p className="text-xs text-gray-500 flex items-center gap-1">
+                                <Building2 className="w-3 h-3" />{building.buildingNo}
+                              </p>
+                            )}
                             <p className="text-sm text-gray-600">{obj.content}</p>
-                            <div className="flex items-center gap-4 text-xs text-gray-400">
+                            <div className="flex items-center gap-4 text-xs text-gray-400 flex-wrap">
                               <span className="flex items-center gap-1">
                                 <Phone className="w-3 h-3" />{obj.contactInfo}
                               </span>
                               <span className="flex items-center gap-1">
                                 <Clock className="w-3 h-3" />{formatDateTime(obj.createdAt)}
                               </span>
+                              {obj.status !== 'resolved' && (
+                                <span className={cn(
+                                  'font-semibold',
+                                  remaining <= 0 ? 'text-red-500' : remaining <= 1 ? 'text-amber-500' : 'text-gray-500'
+                                )}>
+                                  {remaining <= 0 ? '已超期' : `剩余${remaining}天`}
+                                </span>
+                              )}
                             </div>
                             {obj.reply && (
                               <div className="mt-2 p-3 bg-emerald-50 rounded-lg border border-emerald-100">

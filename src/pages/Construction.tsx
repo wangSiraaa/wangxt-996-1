@@ -5,6 +5,7 @@ import {
   PROJECT_STATUS_LABELS,
   formatDate,
   isSevenDaysFull,
+  isObjectionOverdueByCategory,
 } from '@/types';
 import {
   CheckCircle2,
@@ -41,6 +42,8 @@ export default function Construction() {
     objections,
     constructionPhases,
     canStartConstruction,
+    canBuildingStartConstruction,
+    changeRecords,
     getVoteStats,
     addConstructionPhase,
     startPhase,
@@ -210,6 +213,78 @@ export default function Construction() {
           </div>
         )}
       </section>
+
+      {selectedProjectId && projectBuildings.length > 0 && (
+        <section className="space-y-4">
+          <h2 className="text-lg font-semibold flex items-center gap-2 border-b pb-2">
+            <ShieldCheck size={20} className="text-blue-600" />
+            楼栋开工校验
+          </h2>
+          <div className="grid gap-4 sm:grid-cols-2">
+            {projectBuildings.map((building) => {
+              const buildingCheck = canBuildingStartConstruction(building.id);
+              const buildingObjections = objections.filter((o) => o.buildingId === building.id);
+              const hasOverdueObjections = buildingObjections.some(
+                (o) => o.status === 'overdue' || (isObjectionOverdueByCategory(o.createdAt, o.category) && (o.status === 'pending' || o.status === 'processing'))
+              );
+              const cascadeBlocked = building.inspectionLocked && changeRecords.some(
+                (c) => c.status === 'approved' && c.cascadeAffectedBuildingIds.includes(building.id)
+              );
+              const checklist = [
+                { label: '代表人已确认', passed: building.representativeConfirmed },
+                { label: '监理已备案', passed: building.supervisorFiled },
+                { label: '无超期异议', passed: !hasOverdueObjections },
+                { label: '未受级联变更禁止', passed: !cascadeBlocked },
+              ];
+              return (
+                <div key={building.id} className="border rounded-xl p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-semibold text-gray-800">{building.buildingNo}</h3>
+                    {buildingCheck.canStart ? (
+                      <span className="flex items-center gap-1.5 px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm font-semibold">
+                        <CheckCircle2 size={16} />
+                        允许开工
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1.5 px-3 py-1 bg-red-100 text-red-700 rounded-full text-sm font-semibold">
+                        <XCircle size={16} />
+                        禁止开工
+                      </span>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    {checklist.map((item, i) => (
+                      <div key={i} className="flex items-center justify-between">
+                        <span className="text-sm text-gray-600">{item.label}</span>
+                        <span className={cn('flex items-center gap-1.5 text-sm font-medium', item.passed ? 'text-green-600' : 'text-red-600')}>
+                          {item.passed ? <CheckCircle2 size={16} /> : <XCircle size={16} />}
+                          {item.passed ? '已满足' : '未满足'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  {cascadeBlocked && (
+                    <div className="text-sm text-red-600 flex items-start gap-2 px-3 py-2 bg-red-50 rounded-lg">
+                      <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+                      <span>受级联变更影响，已验收楼栋禁止回改施工计划</span>
+                    </div>
+                  )}
+                  {!buildingCheck.canStart && buildingCheck.reasons.length > 0 && (
+                    <div className="space-y-1">
+                      {buildingCheck.reasons.map((reason, i) => (
+                        <div key={i} className="text-sm text-red-500 flex items-center gap-1.5">
+                          <XCircle size={12} />
+                          {reason}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       <section className="space-y-4">
         <h2 className="text-lg font-semibold flex items-center gap-2 border-b pb-2">
